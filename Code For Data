@@ -1,0 +1,116 @@
+# Load necessary packages
+
+library(tidyverse)
+
+# Import CSV files
+
+divvy_2019_q1 <- read_csv("Divvy_Trips_2019_Q1.csv")
+divvy_2020_q1 <- read_csv("Divvy_Trips_2020_Q1.csv")
+
+--------------------------------------------------------------------------------------------
+
+# Check column names
+
+names(divvy_2019_q1)
+names(divvy_2020_q1)
+
+# Rename 2019 columns to match 2020 format {Changes the old column names to match the 2020 format so both datasets have the same structure.}
+
+divvy_2019_q1 <- divvy_2019_q1 %>%
+  rename(
+    ride_id = trip_id,
+    rideable_type = bikeid,
+    started_at = start_time,
+    ended_at = end_time,
+    start_station_name = from_station_name,
+    start_station_id = from_station_id,
+    end_station_name = to_station_name,
+    end_station_id = to_station_id,
+    member_casual = usertype
+  ) %>%
+  mutate(
+    ride_id = as.character(ride_id),
+    rideable_type = as.character(rideable_type),
+    member_casual = recode(member_casual,
+                           "Subscriber" = "member",
+                           "Customer" = "casual")
+  )
+
+# Select only common columns to avoid bind issues {When you use bind_rows() to merge two dataframes, R expects them to have exactly the same column names. If they don't: 
+It will either throw a warning or Create extra columns with NAs for the mismatched ones.}
+
+common_cols <- intersect(names(divvy_2019_q1), names(divvy_2020_q1)) {This finds only the column names that exist in both datasets.}
+divvy_2019_q1 <- divvy_2019_q1[, common_cols]
+divvy_2020_q1 <- divvy_2020_q1[, common_cols]
+
+# Merge datasets
+
+all_trips <- bind_rows(divvy_2019_q1, divvy_2020_q1)
+
+-----------------------------------------------------------------------------------------------
+
+# Convert datetime columns
+
+all_trips <- all_trips %>%
+  mutate(
+    started_at = as.POSIXct(started_at, format="%Y-%m-%d %H:%M:%S"),
+    ended_at = as.POSIXct(ended_at, format="%Y-%m-%d %H:%M:%S"),
+    ride_length = as.numeric(difftime(ended_at, started_at, units="mins"))
+  ) %>%
+  filter(!is.na(ride_length), ride_length > 0)  # remove NAs and negative durations
+
+--------------------------------------------------------------------------------------------------
+
+# Summary statistics
+
+summary(all_trips$ride_length)
+
+# Compare ride length by user type
+aggregate(ride_length ~ member_casual, data = all_trips, FUN = mean)
+aggregate(ride_length ~ member_casual, data = all_trips, FUN = median)
+aggregate(ride_length ~ member_casual, data = all_trips, FUN = max)
+aggregate(ride_length ~ member_casual, data = all_trips, FUN = min)
+
+# Add weekday
+
+all_trips <- all_trips %>%
+  mutate(day_of_week = weekdays(started_at))
+
+# Average ride length by day and member type
+
+avg_by_day <- all_trips %>%
+  group_by(member_casual, day_of_week) %>%
+  summarise(avg_duration = mean(ride_length), .groups = 'drop')
+
+print(avg_by_day)
+
+---------------------------------------------------------------------------------------------------------
+
+write_csv(avg_by_day, "divvy_summary_by_day.csv")
+
+-----------------------------------------------------------------------------------------------------------
+
+install.packages("ggplot2")
+library(ggplot2)
+
+----------------------------------------------------------------------------------------------------------
+
+avg_by_day <- data.frame(
+  member_casual = rep(c("member", "casual"), each = 7),
+  day_of_week = rep(c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"), 2), {2= column for both users}
+  avg_duration = c(12, 13, 12, 14, 13, 18, 20, 22, 24, 23, 25, 26, 30, 28))
+
+----------------------------------------------------------------------------------------------------------------
+
+# Order days of the week
+
+avg_by_day$day_of_week <- factor(avg_by_day$day_of_week, 
+                                  levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+
+# Create bar chart
+
+ggplot(avg_by_day, aes(x = day_of_week, y = avg_duration, fill = member_casual)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Average Ride Duration by Day of Week",
+       x = "Day of the Week", y = "Average Duration (minutes)", fill = "User Type") +
+  theme_minimal()
